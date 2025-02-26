@@ -1,0 +1,18 @@
+version: '3.8'
+
+services:
+  yt-mp4:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "3000:3000"
+    volumes:
+      - "${VIDEO_OUTPUT_DIR}:/app/downloads"
+    environment:
+      - VIDEO_OUTPUT_DIR=/app/downloads
+      - HOLYRICS_API_URL=${HOLYRICS_API_URL}
+      - HOLYRICS_API_TOKEN=${HOLYRICS_API_TOKEN}
+      - HOLYRICS_MONITOR_API=${HOLYRICS_MONITOR_API}
+      - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}
+    restart: unless-stopped
