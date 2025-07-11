@@ -1,4 +1,5 @@
 import youtubeDl from 'youtube-dl-exec';
+import ytdl from '@distube/ytdl-core';
 import fs from 'fs';
 import path from 'path';
 import axios from 'axios';
@@ -93,19 +94,24 @@ class VideoService {
 
   async downloadVideo(url, outputPath) {
     console.log('Starting video download to:', outputPath);
-    await youtubeDl.exec(url, {
-      output: outputPath,
-      format: 'best[ext=mp4]',
-      noCheckCertificate: true,
-      noWarnings: true,
-      noCallHome: true,
-      preferFreeFormats: true,
-      youtubeSkipDashManifest: true
+    const tempPath = `${outputPath}.tmp`;
+
+    await new Promise((resolve, reject) => {
+      const stream = ytdl(url, {
+        filter: (format) => format.container === 'mp4' && format.hasAudio && format.hasVideo,
+        quality: 'highest'
+      }).pipe(fs.createWriteStream(tempPath));
+
+      stream.on('finish', resolve);
+      stream.on('error', reject);
     });
+
+    fs.renameSync(tempPath, outputPath);
 
     if (!fs.existsSync(outputPath)) {
       throw new Error('Downloaded file not found');
     }
+
     console.log('Video download completed successfully');
     return outputPath;
   }
@@ -137,6 +143,20 @@ class VideoService {
       outputPath,
       videoInfo
     };
+  }
+
+  async addToHolyricsPlaylist(fileName) {
+    if (!this.holyricsMonitorApi) {
+      return;
+    }
+    try {
+      await axios.post(`${this.holyricsMonitorApi}/playlist/add`, {
+        fileName
+      });
+      console.log('Added to Holyrics playlist:', fileName);
+    } catch (error) {
+      console.error('Failed to add file to Holyrics playlist:', error.message);
+    }
   }
   async convertToMp3(inputPath, outputPath) {
     console.log('Converting video to MP3:', inputPath);
