@@ -24,7 +24,6 @@ try {
   telegramBot = new TelegramBotService({
     telegramBotToken: process.env.TELEGRAM_BOT_TOKEN
   });
-  await telegramBot.initializeHandlers();
   console.log('Telegram bot initialized successfully');
 } catch (error) {
   console.error('Failed to initialize Telegram bot:', error);
