@@ -98,8 +98,9 @@ class TelegramBotService {
 
         this.bot.on('callback_query', async (query) => {
             const chatId = query.message.chat.id;
-            const [format, ...urlParts] = query.data.split(':');
-            const url = urlParts.join(':');
+            const separatorIndex = query.data.indexOf(':');
+            const format = query.data.substring(0, separatorIndex);
+            const url = query.data.substring(separatorIndex + 1);
             const callbackId = `${query.id}_${format}`;
 
             if (this.processedCallbacks.has(callbackId)) {
