@@ -13,4 +13,20 @@ services:
       - HOLYRICS_API_TOKEN=${HOLYRICS_API_TOKEN}
       - HOLYRICS_MONITOR_API=${HOLYRICS_MONITOR_API}
       - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}
+      - WHISPER_API_URL=${WHISPER_API_URL}
+      - USE_LOCAL_WHISPER=${USE_LOCAL_WHISPER}
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - OPENAI_USAGE_SECRET=${OPENAI_USAGE_SECRET}
     restart: unless-stopped
+  whisper-api:
+    build:
+      context: ./whisper-api
+      dockerfile: Dockerfile
+    container_name: whisper-api
+    ports:
+      - "9000:9000"
+    volumes:
+      - "${VIDEO_OUTPUT_DIR}:/data"
+volumes:
+  shared-audio:
+    driver: local

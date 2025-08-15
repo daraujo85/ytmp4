@@ -1,0 +1,4 @@
+faster-whisper
+uvicorn
+fastapi
+hf_xet
