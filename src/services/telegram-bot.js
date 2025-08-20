@@ -98,13 +98,15 @@ class TelegramBotService {
           // Validate YouTube URL
           this.videoService.validateYouTubeUrl(text);
 
-          // Send format selection buttons
+          // Atualizar o menu de seleção inicial
           await this.bot.sendMessage(chatId, 'Qual formato arquivo OU ação você precisa?', {
             reply_markup: {
               inline_keyboard: [
                 [
                   { text: '🎥 Vídeo', callback_data: `video:${text}` },
-                  { text: '🎵 Áudio', callback_data: `audio:${text}` },
+                  { text: '🎵 Áudio', callback_data: `audio:${text}` }
+                ],
+                [
                   { text: '📝 Transcrição', callback_data: `transcrever:${text}` },
                   { text: '🧠 Resumo', callback_data: `resumir:${text}` }
                 ]
@@ -220,43 +222,115 @@ class TelegramBotService {
         const fullPath = path.join(outputDir, fileName);
         let reuseFile = false;
 
+        // Verificar se arquivo já existe (sem restrição de data)
         if (fs.existsSync(fullPath)) {
           const stats = fs.statSync(fullPath);
-          const fileDate = new Date(stats.birthtime);
-          const today = new Date();
-
-          reuseFile =
-            fileDate.getFullYear() === today.getFullYear() &&
-            fileDate.getMonth() === today.getMonth() &&
-            fileDate.getDate() === today.getDate();
+          const fileSizeMB = stats.size / (1024 * 1024);
+          
+          // Se o arquivo existe e tem tamanho razoável, reutilizar
+          if (fileSizeMB > 0.1) { // Arquivo maior que 100KB
+            reuseFile = true;
+            await this.bot.sendMessage(chatId, `♻️ Arquivo já existe na pasta downloads. Reutilizando o arquivo.`);
+          }
         }
 
-        if (reuseFile) {
-          await this.bot.sendMessage(chatId, `♻️ Vídeo já foi baixado hoje. Reutilizando o arquivo.`);
-        } else {
-          let reuseFile = false;
-
-          if (fs.existsSync(fullPath)) {
-            const stats = fs.statSync(fullPath);
-            const fileDate = new Date(stats.birthtime);
-            const today = new Date();
-
-            reuseFile =
-              fileDate.getFullYear() === today.getFullYear() &&
-              fileDate.getMonth() === today.getMonth() &&
-              fileDate.getDate() === today.getDate();
-          }
-
-          if (reuseFile) {
-            await this.bot.sendMessage(chatId, `♻️ Vídeo já foi baixado hoje. Reutilizando o arquivo.`);
-          } else {
-            await this.bot.sendMessage(chatId, `⬇️ Baixando vídeo...`);
-            await this.videoService.downloadVideo(url, fullPath);
-          }
-
+        // Só baixar se não existir arquivo válido
+        if (!reuseFile) {
+          await this.bot.sendMessage(chatId, `⬇️ Baixando vídeo...`);
+          await this.videoService.downloadVideo(url, fullPath);
         }
 
         if (action === 'video') {
+          // Verificar tamanho do arquivo antes de enviar
+          const stats = fs.statSync(fullPath);
+          const fileSizeMB = stats.size / (1024 * 1024);
+          
+          if (fileSizeMB > 50) {
+            // Função para estimar tamanho baseado na qualidade
+            const estimateSize = (originalSizeMB, quality) => {
+              const compressionRates = {
+                'low': 0.05,   // ~5% do tamanho original (baseado no exemplo: 640MB -> 33MB)
+                'medium': 0.15, // ~15% do tamanho original 
+                'high': 0.25    // ~25% do tamanho original
+              };
+              return originalSizeMB * compressionRates[quality];
+            };
+            
+            // Calcular estimativas para cada qualidade
+            const lowEstimate = estimateSize(fileSizeMB, 'low');
+            const mediumEstimate = estimateSize(fileSizeMB, 'medium');
+            const highEstimate = estimateSize(fileSizeMB, 'high');
+            
+            // Criar botões apenas para qualidades que ficam abaixo de 50MB
+            const mp4Buttons = [];
+            
+            //if (lowEstimate <= 50) {
+              mp4Buttons.push({ 
+                text: `🎥 MP4 Baixa (~${lowEstimate.toFixed(1)}MB)`, 
+                callback_data: `mp4_low:${url}` 
+              });
+            //}
+            
+            if (mediumEstimate <= 50) {
+              mp4Buttons.push({ 
+                text: `🎥 MP4 Média (~${mediumEstimate.toFixed(1)}MB)`, 
+                callback_data: `mp4_medium:${url}` 
+              });
+            }
+            
+            if (highEstimate <= 50) {
+              mp4Buttons.push({ 
+                text: `🎥 MP4 Alta (~${highEstimate.toFixed(1)}MB)`, 
+                callback_data: `mp4_high:${url}` 
+              });
+            }
+            
+            // Criar layout do teclado inline
+            const inlineKeyboard = [];
+            
+            // Adicionar botões MP4 se houver algum viável
+            if (mp4Buttons.length > 0) {
+              // Dividir em linhas de até 2 botões
+              for (let i = 0; i < mp4Buttons.length; i += 2) {
+                inlineKeyboard.push(mp4Buttons.slice(i, i + 2));
+              }
+            }
+            
+            // Sempre adicionar opções de áudio e divisão
+            inlineKeyboard.push([
+              { text: '🎵 Converter para Áudio', callback_data: `audio:${url}` },
+              { text: '✂️ Dividir Vídeo', callback_data: `split:${url}` }
+            ]);
+            
+            // Adicionar opção de upload
+            inlineKeyboard.push([
+              { text: '📤 Upload para Drive', callback_data: `upload:${url}` }
+            ]);
+            
+            let messageText = `⚠️ *Arquivo muito grande para envio pelo Telegram*\n\n` +
+              `📁 *Tamanho:* ${fileSizeMB.toFixed(2)} MB\n` +
+              `📏 *Limite do Telegram:* 50 MB\n\n` +
+              `*Opções disponíveis:*\n`;
+            
+            if (mp4Buttons.length > 0) {
+              messageText += `🎥 Converter MP4 (com estimativas de tamanho)\n`;
+            } else {
+              messageText += `⚠️ Nenhuma qualidade MP4 ficará abaixo de 50MB\n`;
+            }
+            
+            messageText += `🎵 Converter para áudio\n` +
+              `✂️ Dividir em partes menores\n` +
+              `☁️ Upload para serviço de nuvem`;
+            
+            await this.bot.sendMessage(chatId, messageText, {
+              parse_mode: 'Markdown',
+              reply_markup: {
+                inline_keyboard: inlineKeyboard
+              }
+            });
+            return;
+          }
+          
           await this.bot.sendVideo(chatId, fullPath, {
             caption: `*${videoInfo.title}*`,
             parse_mode: 'Markdown'
@@ -266,13 +340,122 @@ class TelegramBotService {
           if (!fs.existsSync(audioPath)) {
             await this.bot.sendMessage(chatId, `🎧 Convertendo vídeo em áudio...`);
             await this.videoService.convertToMp3(fullPath, audioPath, true);
-          }          
-          await this.bot.sendAudio(chatId, fullPath, {
+          }
+          
+          // Verificar tamanho do áudio também
+          const audioStats = fs.statSync(audioPath);
+          const audioSizeMB = audioStats.size / (1024 * 1024);
+          
+          if (audioSizeMB > 50) {
+            await this.bot.sendMessage(chatId, 
+              `⚠️ *Arquivo de áudio muito grande*\n\n` +
+              `📁 *Tamanho:* ${audioSizeMB.toFixed(2)} MB\n` +
+              `📏 *Limite do Telegram:* 50 MB\n\n` +
+              `Tentando comprimir o áudio...`, 
+              { parse_mode: 'Markdown' }
+            );
+            
+            // Comprimir áudio com qualidade menor
+            const compressedPath = audioPath.replace('.mp3', '_compressed.mp3');
+            await this.videoService.convertToMp3(fullPath, compressedPath, true, '64k'); // Bitrate menor
+            
+            const compressedStats = fs.statSync(compressedPath);
+            const compressedSizeMB = compressedStats.size / (1024 * 1024);
+            
+            if (compressedSizeMB <= 50) {
+              await this.bot.sendAudio(chatId, compressedPath, {
+                caption: `*${videoInfo.title}* (Comprimido)`,
+                parse_mode: 'Markdown'
+              });
+              fs.unlinkSync(compressedPath);
+            } else {
+              await this.bot.sendMessage(chatId, 
+                `❌ Mesmo comprimido, o arquivo ainda é muito grande (${compressedSizeMB.toFixed(2)} MB).\n` +
+                `Considere baixar um vídeo mais curto ou usar um serviço de nuvem.`
+              );
+            }
+            return;
+          }
+          
+          await this.bot.sendAudio(chatId, audioPath, {
             caption: `*${videoInfo.title}*`,
             parse_mode: 'Markdown'
           });
+        } else if (action.startsWith('mp4_')) {
+          const quality = action.split('_')[1]; // low, medium, high
+          
+          await this.bot.sendMessage(chatId, `🎬 Convertendo vídeo para MP4 qualidade ${quality}...`);
+          
+          const convertedPath = fullPath.replace('.mp4', `_${quality}.mp4`);
+          await this.videoService.convertToMp4(fullPath, convertedPath, quality);
+          
+          // Verificar tamanho do arquivo convertido
+          const convertedStats = fs.statSync(convertedPath);
+          const convertedSizeMB = convertedStats.size / (1024 * 1024);
+          
+          if (convertedSizeMB > 50) {
+            await this.bot.sendMessage(chatId, 
+              `⚠️ *Arquivo convertido ainda é muito grande*\n\n` +
+              `📁 *Tamanho:* ${convertedSizeMB.toFixed(2)} MB\n` +
+              `Tente uma qualidade menor ou divida o vídeo.`, 
+              { parse_mode: 'Markdown' }
+            );
+            
+            // Oferecer opção de dividir o vídeo convertido
+            await this.bot.sendMessage(chatId, 'Deseja dividir o vídeo em partes menores?', {
+              reply_markup: {
+                inline_keyboard: [
+                  [
+                    { text: '✂️ Sim, dividir', callback_data: `split_converted:${convertedPath}` },
+                    { text: '❌ Cancelar', callback_data: 'cancel' }
+                  ]
+                ]
+              }
+            });
+            return;
+          }
+          
+          await this.bot.sendVideo(chatId, convertedPath, {
+            caption: `*${videoInfo.title}* (${quality.toUpperCase()})`,
+            parse_mode: 'Markdown'
+          });
+          
+          // Limpar arquivo convertido
+          if (fs.existsSync(convertedPath)) fs.unlinkSync(convertedPath);
+        } else if (action === 'split' || action.startsWith('split_')) {
+          const pathToSplit = action.startsWith('split_converted:') ? 
+            action.replace('split_converted:', '') : fullPath;
+          
+          await this.bot.sendMessage(chatId, `✂️ Dividindo vídeo em partes menores...`);
+          
+          const parts = await this.videoService.splitVideo(pathToSplit, path.dirname(pathToSplit));
+          
+          for (let i = 0; i < parts.length; i++) {
+            const part = parts[i];
+            await this.bot.sendVideo(chatId, part, {
+              caption: `*${videoInfo.title}* - Parte ${i + 1}/${parts.length}`,
+              parse_mode: 'Markdown'
+            });
+            
+            // Limpar arquivo da parte após envio
+            if (fs.existsSync(part)) fs.unlinkSync(part);
+          }
+          
+          // Limpar arquivo original se foi dividido
+          if (action.startsWith('split_converted:') && fs.existsSync(pathToSplit)) {
+            fs.unlinkSync(pathToSplit);
+          }
+        } else if (action === 'upload') {
+          await this.bot.sendMessage(chatId, 
+            `☁️ *Upload para serviço de nuvem*\n\n` +
+            `Esta funcionalidade estará disponível em breve.\n` +
+            `Por enquanto, você pode:\n` +
+            `• Converter para qualidade menor\n` +
+            `• Dividir o vídeo em partes\n` +
+            `• Converter apenas para áudio`, 
+            { parse_mode: 'Markdown' }
+          );
         }
-
         await new Promise(resolve => setTimeout(resolve, 3000));
         if (fs.existsSync(fullPath)) fs.unlinkSync(fullPath);
 

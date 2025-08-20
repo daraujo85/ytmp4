@@ -220,16 +220,18 @@ class VideoService {
     };
   }
 
-  async convertToMp3(inputPath, outputPath, lowQuality = false) {
-    if (!fs.existsSync(inputPath)) throw new Error('Input video file not found');
-
-    const bitrate = lowQuality ? '64k' : '320k';
-    const sampleRate = lowQuality ? '22050' : '44100';
-    const command = `ffmpeg -i "${inputPath}" -vn -acodec libmp3lame -ab ${bitrate} -ar ${sampleRate} -y "${outputPath}"`;
-    await execAsync(command);
-
-    if (!fs.existsSync(outputPath)) throw new Error('Converted audio file not found');
-    return outputPath;
+  async convertToMp3(inputPath, outputPath, lowQuality = false, bitrate = null) {
+    const command = lowQuality 
+      ? `ffmpeg -i "${inputPath}" -vn -ar 44100 -ac 2 -b:a ${bitrate || '128k'} "${outputPath}"` 
+      : `ffmpeg -i "${inputPath}" -vn -ar 44100 -ac 2 -b:a ${bitrate || '192k'} "${outputPath}"`;
+    
+    try {
+      await execAsync(command);
+      console.log(`Audio converted successfully: ${outputPath}`);
+    } catch (error) {
+      console.error(`Error converting to MP3: ${error.message}`);
+      throw error;
+    }
   }
 
   async splitAudioFile(inputPath, chunkDuration = 300) {
@@ -258,20 +260,92 @@ class VideoService {
 
   async transcribeWithLocalWhisper(filePath) {
     try {
-      const response = await axios.post(
-        `${this.whisperApiUrl}/transcribe`,
-        {
-          file: `/data/${path.basename(filePath)}`,
-          language: 'pt'
-        },
-        {
-          headers: { 'Content-Type': 'application/json' }
-        }
-      );
-      return response.data.transcription;
+      const response = await axios.post('http://localhost:8000/transcribe', {
+        file_path: filePath
+      });
+      return response.data;
     } catch (error) {
-      console.error('Erro na transcrição local:', error);
-      throw new Error(`Erro no Whisper local: ${error.message}`);
+      console.error('Error with local Whisper API:', error.message);
+      throw error;
+    }
+  }
+
+  async splitVideo(inputPath, outputDir, maxSizeMB = 45) {
+    const stats = fs.statSync(inputPath);
+    const fileSizeMB = stats.size / (1024 * 1024);
+    
+    if (fileSizeMB <= maxSizeMB) {
+      return [inputPath]; // Não precisa dividir
+    }
+    
+    // Calcular número de partes necessárias
+    const numParts = Math.ceil(fileSizeMB / maxSizeMB);
+    const videoDuration = await this.getVideoDuration(inputPath);
+    const partDuration = Math.floor(videoDuration / numParts);
+    
+    const parts = [];
+    
+    for (let i = 0; i < numParts; i++) {
+      const startTime = i * partDuration;
+      const endTime = i === numParts - 1 ? videoDuration : (i + 1) * partDuration;
+      const outputPath = path.join(outputDir, `part_${i + 1}_${path.basename(inputPath)}`);
+      
+      // Usar ffmpeg para dividir o vídeo
+      const ffmpeg = require('fluent-ffmpeg');
+      await new Promise((resolve, reject) => {
+        ffmpeg(inputPath)
+          .seekInput(startTime)
+          .duration(endTime - startTime)
+          .output(outputPath)
+          .on('end', resolve)
+          .on('error', reject)
+          .run();
+      });
+      
+      parts.push(outputPath);
+    }
+    
+    return parts;
+  }
+
+  async getVideoDuration(videoPath) {
+    const ffprobe = require('ffprobe-static');
+    const ffmpeg = require('fluent-ffmpeg');
+    ffmpeg.setFfprobePath(ffprobe.path);
+    
+    return new Promise((resolve, reject) => {
+      ffmpeg.ffprobe(videoPath, (err, metadata) => {
+        if (err) reject(err);
+        else resolve(metadata.format.duration);
+      });
+    });
+  }
+
+  async convertToMp4(inputPath, outputPath, quality = 'medium') {
+    let qualitySettings;
+    
+    switch (quality) {
+      case 'low':
+        qualitySettings = '-crf 28 -preset fast -vf scale=640:360';
+        break;
+      case 'medium':
+        qualitySettings = '-crf 23 -preset medium -vf scale=1280:720';
+        break;
+      case 'high':
+        qualitySettings = '-crf 18 -preset slow -vf scale=1920:1080';
+        break;
+      default:
+        qualitySettings = '-crf 23 -preset medium';
+    }
+    
+    const command = `ffmpeg -i "${inputPath}" ${qualitySettings} -c:a aac -b:a 128k "${outputPath}"`;
+    
+    try {
+      await execAsync(command);
+      console.log(`Video converted successfully to ${quality} quality: ${outputPath}`);
+    } catch (error) {
+      console.error(`Error converting to MP4 ${quality}: ${error.message}`);
+      throw error;
     }
   }
 }
